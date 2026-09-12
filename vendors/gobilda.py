@@ -9,10 +9,10 @@ if lib_path not in sys.path:
     
 import requests
 
-class GrabCAD(Vendor):
+class GoBilda(Vendor):
     @property
     def name(self):
-        return 'GrabCAD'
+        return 'GoBilda'
        
     # TODO: use kwargs/dict for anything after query 
     def search(self, query: str, filters: dict) -> list[dict] | int:
@@ -31,9 +31,9 @@ class GrabCAD(Vendor):
             return response.status_code
         
     def add_inputs(self, inputs: adsk.core.CommandCreatedEventArgs.command.commandInputs) -> dict:
-        test = inputs.addStringValueInput('query', 'Query', 'gabcad')
-        test.isVisible = False
-        return {'test':test}
+        test = inputs.addStringValueInput('query', 'Query', 'grobildaa')
+        test.isVisible=False
+        return {'test': test}
         
     def __reformat__(self, item: dict, allowed_types: list) -> dict:
         types = ['STEP / IGES' if t == 'step-slash-iges' else t for t in allowed_types]

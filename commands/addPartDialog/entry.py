@@ -10,6 +10,7 @@ ui = app.userInterface
 
 
 ADDIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+app.log(ADDIN_ROOT)
 if ADDIN_ROOT not in sys.path:
     sys.path.insert(0, ADDIN_ROOT)
     
@@ -97,12 +98,13 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     vendorDropdown = inputs.addDropDownCommandInput("vendor", "Vendor", adsk.core.DropDownStyles.TextListDropDownStyle) # type: ignore
     vendorList = vendorDropdown.listItems
     
+    vendorInputs = {}
     for name in vendors.keys():
         vendorList.add(name, False)
-        
+        vendorInputs[name] = vendors[name].add_inputs(inputs)
     global _vendorCache
     
-    _vendorCache = vendors
+    _vendorCache = (vendors, vendorInputs)
     
     inputs.addSeparatorCommandInput('sep1')
     
@@ -110,8 +112,12 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     
     # TODO: if external is true, show CloudFolderDialog
     
-    loc = ui.createCloudFolderDialog()
-    res = loc.showDialog()
+    #fusionHubFolderDialog = ui.createCloudFolderDialog()
+    #fusionHubFolder = fusionHubFolderDialog.showDialog()
+    
+    on_input_changed = InputChangedHandler()
+    args.command.inputChanged.add(on_input_changed)
+    local_handlers.append(on_input_changed)
         
     # TODO Connect to the events that are needed by this command.
     #futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)
@@ -181,3 +187,24 @@ def command_destroy(args: adsk.core.CommandEventArgs):
 
     global local_handlers
     local_handlers = []
+    
+class InputChangedHandler(adsk.core.InputChangedEventHandler):
+    def notify(self, args):
+        changed_input = args.input
+        inputs = args.input
+        app.log('change!!')
+        
+        if changed_input.id == 'vendor':
+            selected = changed_input.selectedItem.name
+            app.log('vendor chanee')
+            app.log(selected    )
+            
+            for v in _vendorCache[1]:
+                for name, inps in v.items():
+                    app.log(name)
+                    if name == selected:
+                        for i in inps:
+                            i.isVisible = True
+                    else:
+                        for i in inps:
+                            i.isVisible = False

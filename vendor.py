@@ -16,7 +16,7 @@ class Vendor(ABC):
         pass
     
     @abstractmethod
-    def inputs(self, inputs: adsk.core.CommandCreatedEventArgs.command.commandInputs) -> dict:
+    def add_inputs(self, inputs: adsk.core.CommandCreatedEventArgs.command.commandInputs) -> dict:
         """
         vendor-specific input objects
         """

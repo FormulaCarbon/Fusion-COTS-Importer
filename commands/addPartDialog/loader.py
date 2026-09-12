@@ -5,7 +5,7 @@ import adsk.core
 
 app = adsk.core.Application.get()
 
-def load_vendors(folder_path, base_class):
+def load_vendors[T](folder_path, base_class: type[T]) -> dict[str, T]:
     """Scans folder_path for .py files, returns {name: instance} for each
     valid concrete subclass of base_class found."""
     vendors = {}
