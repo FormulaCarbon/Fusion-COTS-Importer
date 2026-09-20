@@ -2,7 +2,7 @@ import adsk.core
 import os, sys
 from ...lib import fusionAddInUtils as futil
 from ... import config
-from vendor import Vendor
+
 from .loader import load_vendors
 
 app = adsk.core.Application.get()
@@ -13,6 +13,7 @@ ADDIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__
 app.log(ADDIN_ROOT)
 if ADDIN_ROOT not in sys.path:
     sys.path.insert(0, ADDIN_ROOT)
+from vendor import Vendor
     
 VENDOR_FOLDER = os.path.join(ADDIN_ROOT, 'vendors')
 
@@ -97,18 +98,22 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     
     vendorDropdown = inputs.addDropDownCommandInput("vendor", "Vendor", adsk.core.DropDownStyles.TextListDropDownStyle) # type: ignore
     vendorList = vendorDropdown.listItems
-    
+    vendorList.add('Select Vendor', True)
     vendorInputs = {}
-    for name in vendors.keys():
-        vendorList.add(name, False)
+    for index, name in enumerate(vendors.keys()):
+        vendorList.add(name, index == 0)
         vendorInputs[name] = vendors[name].add_inputs(inputs)
     global _vendorCache
     
     _vendorCache = (vendors, vendorInputs)
     
     inputs.addSeparatorCommandInput('sep1')
+
+    # A BoolValueInput with isCheckBox=False is displayed as a push button.
+    
     
     external = inputs.addBoolValueInput("external_flag", "External", True)
+    inputs.addBoolValueInput('search', 'Search', False, '', False)
     
     # TODO: if external is true, show CloudFolderDialog
     
@@ -191,20 +196,33 @@ def command_destroy(args: adsk.core.CommandEventArgs):
 class InputChangedHandler(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         changed_input = args.input
-        inputs = args.input
+        inputs = args.inputs
         app.log('change!!')
         
         if changed_input.id == 'vendor':
             selected = changed_input.selectedItem.name
             app.log('vendor chanee')
-            app.log(selected    )
+            app.log(selected)
             
-            for v in _vendorCache[1]:
-                for name, inps in v.items():
-                    app.log(name)
-                    if name == selected:
-                        for i in inps:
-                            i.isVisible = True
-                    else:
-                        for i in inps:
-                            i.isVisible = False
+            for name, inps in _vendorCache[1].items():
+                app.log(name)
+                if name == selected:
+                    for key, i in inps.items():
+                        i.isVisible = True
+                else:
+                    for key, i in inps.items():
+                        i.isVisible = False
+
+        if changed_input.id == 'search':
+            app.log('searchj')
+            selected_vendor = inputs.itemById('vendor').selectedItem.name
+            vendor = _vendorCache[0][selected_vendor]
+            filters = {
+                key: vendor_input.value
+                for key, vendor_input in _vendorCache[1][selected_vendor].items()
+            }
+            results = vendor.search(inputs.itemById('query').value, filters, app)
+            
+
+            app.log(str(results))
+            app.log(str(len(results)))

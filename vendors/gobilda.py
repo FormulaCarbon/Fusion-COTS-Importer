@@ -31,7 +31,7 @@ class GoBilda(Vendor):
             return response.status_code
         
     def add_inputs(self, inputs: adsk.core.CommandCreatedEventArgs.command.commandInputs) -> dict:
-        test = inputs.addStringValueInput('query', 'Query', 'grobildaa')
+        test = inputs.addStringValueInput('asdsa', 'sdfasd', 'grobildaa')
         test.isVisible=False
         return {'test': test}
         

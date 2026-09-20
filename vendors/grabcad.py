@@ -15,13 +15,15 @@ class GrabCAD(Vendor):
         return 'GrabCAD'
        
     # TODO: use kwargs/dict for anything after query 
-    def search(self, query: str, filters: dict) -> list[dict] | int:
+    def search(self, query: str, filters: dict, app) -> list[dict] | int:
+        
         url = f"https://grabcad.com/community/api/v1/models?query={query}&sort={filters['sort']}&softwares={','.join(filters['allowed_types'])}"
         headers = {
             "User-Agent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:154.0) Gecko/20100101 Firefox/154.0'
         }
         
         response = requests.get(url, headers=headers)
+        app.log('asdasdasd')
         if response.status_code == 200:
             models = response.json()['models']
             out = [self.__reformat__(model, filters['allowed_types']) for model in models]
@@ -31,9 +33,11 @@ class GrabCAD(Vendor):
             return response.status_code
         
     def add_inputs(self, inputs: adsk.core.CommandCreatedEventArgs.command.commandInputs) -> dict:
-        test = inputs.addStringValueInput('query', 'Query', 'gabcad')
-        test.isVisible = False
-        return {'test':test}
+        sort = inputs.addStringValueInput('sort'+self.name, 'Sort', 'gabcad')
+        filter = inputs.addStringValueInput('filter'+self.name, 'Filter', 'gabcad')
+        sort.isVisible = False
+        filter.isVisible = False
+        return {'sort': sort, 'filter': filter}
         
     def __reformat__(self, item: dict, allowed_types: list) -> dict:
         types = ['STEP / IGES' if t == 'step-slash-iges' else t for t in allowed_types]
