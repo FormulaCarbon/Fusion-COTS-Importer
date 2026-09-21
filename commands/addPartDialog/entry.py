@@ -1,6 +1,6 @@
 import json
 import adsk.core
-import os, sys
+import os, sys, traceback
 from ...lib import fusionAddInUtils as futil
 from ... import config
 
@@ -92,6 +92,17 @@ def stop():
     if command_definition:
         command_definition.deleteMe()
 
+    # Tear down the palette so that the next Run rebuilds it from the current
+    # HTML resources. Fusion persists a palette (with its loaded HTML/JS) across
+    # add-in Stop/Run, so without this the pagination/theme edits below never
+    # reach the running page.
+    try:
+        palette = ui.palettes.itemById(PALETTE_ID)
+        if palette:
+            palette.deleteMe()
+    except Exception as e:
+        app.log(f'{CMD_NAME}: Palette teardown warning: {type(e).__name__}: {e}')
+
 
 # Function that is called when a user clicks the corresponding button in the UI.
 # This defines the contents of the command dialog and connects to the command related events.
@@ -121,6 +132,15 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     _vendorCache = (vendors, vendorInputs)
     
     inputs.addSeparatorCommandInput('sep1')
+
+    # Pre-create and show the results palette now, while the dialog is opening.
+    # A Fusion palette's HTML loads asynchronously; if we wait until the first
+    # search to create it, the very first sendInfoToHTML is fired before the
+    # page registers fusionJavaScriptHandler and gets silently dropped.
+    try:
+        _get_palette()
+    except Exception:
+        app.log(f'{CMD_NAME}: Could not pre-create palette: {traceback.format_exc()}')
 
     # A BoolValueInput with isCheckBox=False is displayed as a push button.
     
