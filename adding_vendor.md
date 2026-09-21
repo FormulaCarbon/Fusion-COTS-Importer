@@ -24,4 +24,11 @@ class YourVendor(Vendor):
         """
         
         # if it fails return an error code
+
+    def add_inputs(self, inputs: adsk.core.CommandCreatedEventArgs.command.commandInputs) -> dict:
+        """
+        vendor-specific command dialog input objects
+        ensure that the id for each object is unique. it is recommended to append self.name to the end of the id.
+        """
+        return {'name': inputobj}
 ```

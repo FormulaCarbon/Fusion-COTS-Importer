@@ -6,6 +6,13 @@ from ... import config
 
 from .loader import load_vendors
 
+import adsk.fusion
+import zipfile
+import tempfile
+import shutil
+
+import adsk
+
 app = adsk.core.Application.get()
 ui = app.userInterface
 
@@ -53,55 +60,59 @@ ICON_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resource
 # they are not released and garbage collected.
 local_handlers = []
 
+DEFERRED_IMPORT_EVENT_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_deferredImport'
+deferred_import_handlers = []
 
-# Executed when add-in is run.
+
 def start():
-    # Create a command Definition.
     cmd_def = ui.commandDefinitions.addButtonDefinition(CMD_ID, CMD_NAME, CMD_Description, ICON_FOLDER)
-
-    # Define an event handler for the command created event. It will be called when the button is clicked.
     futil.add_handler(cmd_def.commandCreated, command_created)
 
-    # ******** Add a button into the UI so the user can run the command. ********
-    # Get the target workspace the button will be created in.
     workspace = ui.workspaces.itemById(WORKSPACE_ID)
-
-    # Get the panel the button will be created in.
     panel = workspace.toolbarPanels.itemById(PANEL_ID)
-
-    # Create the button command control in the UI after the specified existing command.
     control = panel.controls.addCommand(cmd_def, COMMAND_BESIDE_ID, False)
-
-    # Specify if the command is promoted to the main toolbar. 
     control.isPromoted = IS_PROMOTED
+
+    # Register the event used to safely defer model-modifying work
+    # (importToTarget2) outside of the palette's HTML-callback context.
+    try:
+        custom_event = app.registerCustomEvent(DEFERRED_IMPORT_EVENT_ID)
+    except Exception:
+        # Already registered from a previous run that wasn't cleanly stopped.
+        app.unregisterCustomEvent(DEFERRED_IMPORT_EVENT_ID)
+        custom_event = app.registerCustomEvent(DEFERRED_IMPORT_EVENT_ID)
+
+    on_deferred_import = DeferredImportHandler()
+    custom_event.add(on_deferred_import)
+    deferred_import_handlers.append(on_deferred_import)
 
 
 # Executed when add-in is stopped.
 def stop():
-    # Get the various UI elements for this command
     workspace = ui.workspaces.itemById(WORKSPACE_ID)
     panel = workspace.toolbarPanels.itemById(PANEL_ID)
     command_control = panel.controls.itemById(CMD_ID)
     command_definition = ui.commandDefinitions.itemById(CMD_ID)
 
-    # Delete the button command control
     if command_control:
         command_control.deleteMe()
-
-    # Delete the command definition
     if command_definition:
         command_definition.deleteMe()
 
-    # Tear down the palette so that the next Run rebuilds it from the current
-    # HTML resources. Fusion persists a palette (with its loaded HTML/JS) across
-    # add-in Stop/Run, so without this the pagination/theme edits below never
-    # reach the running page.
     try:
         palette = ui.palettes.itemById(PALETTE_ID)
         if palette:
             palette.deleteMe()
     except Exception as e:
         app.log(f'{CMD_NAME}: Palette teardown warning: {type(e).__name__}: {e}')
+
+    try:
+        app.unregisterCustomEvent(DEFERRED_IMPORT_EVENT_ID)
+    except Exception:
+        pass
+
+    global deferred_import_handlers
+    deferred_import_handlers = []
 
 
 # Function that is called when a user clicks the corresponding button in the UI.
@@ -156,6 +167,8 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     on_input_changed = InputChangedHandler()
     args.command.inputChanged.add(on_input_changed)
     local_handlers.append(on_input_changed)
+
+    futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)
         
     # TODO Connect to the events that are needed by this command.
     #futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)
@@ -168,21 +181,10 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
 # This event handler is called when the user clicks the OK button in the command dialog or 
 # is immediately called after the created event not command inputs were created for the dialog.
 def command_execute(args: adsk.core.CommandEventArgs):
-    # General logging for debug.
     futil.log(f'{CMD_NAME} Command Execute Event')
-
-    # TODO ******************************** Your code here ********************************
-
-    # Get a reference to your command's inputs.
-    inputs = args.command.commandInputs
-    text_box: adsk.core.TextBoxCommandInput = inputs.itemById('text_box')
-    value_input: adsk.core.ValueCommandInput = inputs.itemById('value_input')
-
-    # Do something interesting
-    text = text_box.text
-    expression = value_input.expression
-    msg = f'Your text: {text}<br>Your value: {expression}'
-    ui.messageBox(msg)
+    # Intentionally empty — the actual work (search) already happened in
+    # InputChangedHandler before doExecute() was called. This just lets the
+    # command terminate cleanly.
 
 
 # This event handler is called when the command needs to compute a new preview in the graphics window.
@@ -277,25 +279,78 @@ def _palette_incoming(html_args: adsk.core.HTMLEventArgs):
         html_args.returnData = f'OK - {message_action}'
 
 
+SUPPORTED_CAD_EXTENSIONS = {'.step', '.stp', '.iges', '.igs', '.sat', '.smt', '.f3d'}
+
+
 def _download_file(url: str, filename: str) -> str:
-    """Downloads the file to the local Downloads folder, or opens it in the
-    browser if GrabCAD requires authentication."""
+    tmp_dir = None
     try:
-        os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-        save_path = os.path.join(DOWNLOAD_FOLDER, filename or 'part')
+        tmp_dir = tempfile.mkdtemp(prefix='fusion_cots_')
         headers = {
             "User-Agent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:154.0) Gecko/20100101 Firefox/154.0'
         }
+
         response = requests.get(url, headers=headers, stream=True)
         response.raise_for_status()
-        with open(save_path, 'wb') as f:
+
+        download_path = os.path.join(tmp_dir, filename or 'part')
+        with open(download_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
-        return f'Downloaded to {save_path}'
+
+        cad_files = []
+
+        # Check actual file content, not the (possibly wrong) filename/extension.
+        if zipfile.is_zipfile(download_path):
+            extract_dir = os.path.join(tmp_dir, 'extracted')
+            os.makedirs(extract_dir, exist_ok=True)
+            with zipfile.ZipFile(download_path, 'r') as zf:
+                zf.extractall(extract_dir)
+            for root, _, files in os.walk(extract_dir):
+                for fn in files:
+                    if os.path.splitext(fn)[1].lower() in SUPPORTED_CAD_EXTENSIONS:
+                        cad_files.append(os.path.join(root, fn))
+        else:
+            if os.path.splitext(download_path)[1].lower() in SUPPORTED_CAD_EXTENSIONS:
+                cad_files.append(download_path)
+
+        if not cad_files:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            return 'Downloaded, but no supported CAD file (STEP/IGES/SAT/SMT/F3D) was found inside.'
+
+        app.fireCustomEvent(DEFERRED_IMPORT_EVENT_ID, json.dumps({
+            'cad_files': cad_files,
+            'tmp_dir': tmp_dir
+        }))
+
+        return f'Downloaded {filename}. Inserting into design...'
+
     except Exception as e:
         app.log(f'{CMD_NAME}: Download failed: {type(e).__name__}: {e}')
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         _open_in_browser(url)
-        return f'Direct download blocked by GrabCAD ({e}). Opened in browser - please log in to download.'
+        return f'Direct download blocked ({e}). Opened in browser - please log in to download.'
+
+
+def _insert_cad_file(file_path: str, design: adsk.fusion.Design):
+    import_mgr = app.importManager
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext in ('.step', '.stp'):
+        options = import_mgr.createSTEPImportOptions(file_path)
+    elif ext in ('.iges', '.igs'):
+        options = import_mgr.createIGESImportOptions(file_path)
+    elif ext == '.sat':
+        options = import_mgr.createSATImportOptions(file_path)
+    elif ext == '.smt':
+        options = import_mgr.createSMTImportOptions(file_path)
+    elif ext == '.f3d':
+        options = import_mgr.createFusionArchiveImportOptions(file_path)
+    else:
+        raise ValueError(f'Unsupported CAD file type: {ext}')
+
+    import_mgr.importToTarget2(options, design.rootComponent)
 
 
 def _open_in_browser(url: str):
@@ -310,24 +365,15 @@ class InputChangedHandler(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         changed_input = args.input
         inputs = args.inputs
-        app.log('change!!')
-        
+
         if changed_input.id == 'vendor':
             selected = changed_input.selectedItem.name
-            app.log('vendor chanee')
-            app.log(selected)
-            
             for name, inps in _vendorCache[1].items():
-                app.log(name)
-                if name == selected:
-                    for key, i in inps.items():
-                        i.isVisible = True
-                else:
-                    for key, i in inps.items():
-                        i.isVisible = False
+                visible = (name == selected)
+                for key, i in inps.items():
+                    i.isVisible = visible
 
         if changed_input.id == 'search':
-            app.log('search')
             palette = None
             try:
                 selected_vendor = inputs.itemById('vendor').selectedItem.name
@@ -339,8 +385,7 @@ class InputChangedHandler(adsk.core.InputChangedEventHandler):
                 palette = _get_palette()
                 palette.sendInfoToHTML('status', f'Searching for "{inputs.itemById("query").value}" on {selected_vendor}...')
                 results = vendor.search(inputs.itemById('query').value, filters, app)
-                app.log(f'SEARCH RESULTS ({selected_vendor}): {results}')
-                app.log(f'RESULT COUNT: {len(results)}')
+
                 if isinstance(results, int):
                     palette.sendInfoToHTML('searchError', f'Search failed with status code {results}')
                 else:
@@ -351,7 +396,62 @@ class InputChangedHandler(adsk.core.InputChangedEventHandler):
                     }))
             except Exception as e:
                 app.log(f'SEARCH FAILED: {type(e).__name__}: {e}')
-                import traceback
                 app.log(traceback.format_exc())
                 if palette:
                     palette.sendInfoToHTML('searchError', f'Search failed: {type(e).__name__}: {e}')
+            finally:
+                # Close the command dialog immediately after the search completes.
+                # Downloads (importToTarget2) are only safe once no command is
+                # active — keeping this dialog open indefinitely is what was
+                # causing every download to run "within a command" and crash.
+                try:
+                    inputs.command.doExecute(False)
+                except Exception as e:
+                    app.log(f'{CMD_NAME}: Could not auto-close command: {e}')
+
+class DeferredImportHandler(adsk.core.CustomEventHandler):
+    def notify(self, args: adsk.core.CustomEventArgs):
+        payload = {}
+        try:
+            payload = json.loads(args.additionalInfo)
+            cad_files = payload['cad_files']
+
+            design = adsk.fusion.Design.cast(app.activeProduct)
+            if not design:
+                _notify_palette_status('No active Fusion design to insert into. Open or create a design first.')
+                return
+
+            inserted, failed = [], []
+            for cad_path in cad_files:
+                try:
+                    _insert_cad_file(cad_path, design)
+                    inserted.append(os.path.basename(cad_path))
+                except Exception as e:
+                    app.log(f'{CMD_NAME}: Failed to insert {cad_path}: {type(e).__name__}: {e}')
+                    failed.append(os.path.basename(cad_path))
+
+            if inserted and not failed:
+                msg = f'Inserted as new component: {", ".join(inserted)}'
+            elif inserted and failed:
+                msg = f'Inserted: {", ".join(inserted)}. Failed: {", ".join(failed)} (see Text Commands log).'
+            else:
+                msg = 'Failed to insert the CAD file(s) into the design. See Text Commands log for details.'
+
+            _notify_palette_status(msg)
+
+        except Exception:
+            app.log(f'{CMD_NAME}: Deferred import failed: {traceback.format_exc()}')
+            _notify_palette_status('Import failed unexpectedly. See Text Commands log for details.')
+        finally:
+            tmp_dir = payload.get('tmp_dir')
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _notify_palette_status(message: str):
+    try:
+        palette = ui.palettes.itemById(PALETTE_ID)
+        if palette:
+            palette.sendInfoToHTML('status', message)
+    except Exception as e:
+        app.log(f'{CMD_NAME}: Could not update palette status: {e}')
