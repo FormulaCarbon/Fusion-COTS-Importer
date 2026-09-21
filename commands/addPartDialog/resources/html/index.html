@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vendor Part Search</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+
+        #status {
+            position: sticky; top: 0; z-index: 10;
+            padding: 8px 14px;
+            background: #333; color: #fff; font-size: 13px;
+            border-bottom: 1px solid #555;
+        }
+
+        #results { padding: 10px; }
+        .card {
+            display: flex; gap: 10px;
+            border: 1px solid #ccc; border-radius: 6px;
+            padding: 10px; margin-bottom: 10px;
+            background: #fff;
+        }
+        .card .imgbox {
+            width: 90px; height: 90px; flex-shrink: 0;
+            background: #eee; border-radius: 4px; overflow: hidden;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .card .imgbox img { max-width: 100%; max-height: 100%; object-fit: cover; }
+        .card .info { flex: 1; min-width: 0; }
+        .card .name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+        .card .author { color: #666; font-size: 12px; margin-bottom: 6px; }
+        .files { display: flex; flex-wrap: wrap; gap: 4px; }
+        .files label {
+            font-size: 12px; margin-right: 4px; align-self: center; color: #888;
+        }
+        .dl {
+            font-size: 12px; padding: 4px 8px;
+            background: #1976d2; color: #fff;
+            border: none; border-radius: 4px; cursor: pointer;
+        }
+        .dl:hover { background: #1565c0; }
+        .empty { text-align: center; color: #888; padding: 30px 10px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div id="status">Search results will appear here.</div>
+    <div id="results"></div>
+    <script src="static/palette.js"></script>
+</body>
+</html>
