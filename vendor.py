@@ -8,7 +8,7 @@ class Vendor(ABC):
         pass
 
     @abstractmethod
-    def search(self, query: str) -> list[dict]:
+    def search(self, query: str, **kwargs) -> list[dict]:
         """ 
         Search Function
         Should return a list of items with each item having {name, author, image, [{download link, name, type}]} 
