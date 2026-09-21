@@ -1,9 +1,8 @@
 from vendor import Vendor
 import os, sys
-import adsk.core
+import adsk.core #  type: ignore[import-not-found]
 
 lib_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
-print(lib_path, len(lib_path))
 if lib_path not in sys.path:
     sys.path.append(lib_path)
     
@@ -16,28 +15,27 @@ class GrabCAD(Vendor):
        
     # TODO: use kwargs/dict for anything after query 
     def search(self, query: str, filters: dict, app) -> list[dict] | int:
-        
-        url = f"https://grabcad.com/community/api/v1/models?query={query}&sort={filters['sort']}&softwares={','.join(filters['allowed_types'])}"
+        allowed_types = [t.strip() for t in filters['allowed_types'].split(',')]
+        url = f"https://grabcad.com/community/api/v1/models?query={query}&sort={filters['sort']}&softwares={','.join(allowed_types)}"
         headers = {
             "User-Agent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:154.0) Gecko/20100101 Firefox/154.0'
         }
         
         response = requests.get(url, headers=headers)
-        app.log('asdasdasd')
         if response.status_code == 200:
             models = response.json()['models']
-            out = [self.__reformat__(model, filters['allowed_types']) for model in models]
+            out = [self.__reformat__(model, allowed_types) for model in models]
             return out
         
         else:
             return response.status_code
         
     def add_inputs(self, inputs: adsk.core.CommandCreatedEventArgs.command.commandInputs) -> dict:
-        sort = inputs.addStringValueInput('sort'+self.name, 'Sort', 'gabcad')
-        filter = inputs.addStringValueInput('filter'+self.name, 'Filter', 'gabcad')
+        sort = inputs.addStringValueInput('sort'+self.name, 'Sort', 'recent')
+        types = inputs.addStringValueInput('allowed_types'+self.name, 'Allowed Types', 'step-slash-iges') # type: ignore[attr-defined]
         sort.isVisible = False
-        filter.isVisible = False
-        return {'sort': sort, 'filter': filter}
+        types.isVisible = False
+        return {'sort': sort, 'allowed_types': types}
         
     def __reformat__(self, item: dict, allowed_types: list) -> dict:
         types = ['STEP / IGES' if t == 'step-slash-iges' else t for t in allowed_types]

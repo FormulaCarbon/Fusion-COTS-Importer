@@ -1,1 +1,1 @@
-__all__ = ['grabcad']
+__all__ = ['Select Vendor']

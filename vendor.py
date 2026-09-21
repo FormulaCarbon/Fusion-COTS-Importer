@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-import adsk.core
+import adsk.core # type: ignore[import-not-found]
 
 class Vendor(ABC):
     @property

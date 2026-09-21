@@ -1,3 +1,4 @@
+import json
 import adsk.core
 import os, sys
 from ...lib import fusionAddInUtils as futil
@@ -10,12 +11,24 @@ ui = app.userInterface
 
 
 ADDIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-app.log(ADDIN_ROOT)
 if ADDIN_ROOT not in sys.path:
     sys.path.insert(0, ADDIN_ROOT)
 from vendor import Vendor
-    
+
+LIB_PATH = os.path.join(ADDIN_ROOT, 'lib')
+if LIB_PATH not in sys.path:
+    sys.path.insert(0, LIB_PATH)
+import requests
+
 VENDOR_FOLDER = os.path.join(ADDIN_ROOT, 'vendors')
+
+PALETTE_ID = config.sample_palette_id
+PALETTE_URL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources', 'html', 'index.html').replace('\\', '/')
+PALETTE_DOCKING = adsk.core.PaletteDockingStates.PaletteDockStateRight
+DOWNLOAD_FOLDER = os.path.join(os.path.expanduser('~'), 'Downloads', 'Fusion-COTS-Parts')
+# Local list of event handlers used to maintain a reference so
+# they are not released and garbage collected.
+palette_handlers = []
 
 # TODO *** Specify the command identity information. ***
 CMD_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_addPartDialog'
@@ -193,6 +206,86 @@ def command_destroy(args: adsk.core.CommandEventArgs):
     global local_handlers
     local_handlers = []
     
+def _get_palette():
+    """Gets or creates the results palette."""
+    palette = ui.palettes.itemById(PALETTE_ID)
+    if palette is None:
+        palette = ui.palettes.add(
+            id=PALETTE_ID,
+            name='Vendor Part Search',
+            htmlFileURL=PALETTE_URL,
+            isVisible=True,
+            showCloseButton=True,
+            isResizable=True,
+            width=650,
+            height=600,
+            useNewWebBrowser=True
+        )
+        futil.add_handler(palette.closed, _palette_closed, local_handlers=palette_handlers)
+        futil.add_handler(palette.navigatingURL, _palette_navigating, local_handlers=palette_handlers)
+        futil.add_handler(palette.incomingFromHTML, _palette_incoming, local_handlers=palette_handlers)
+        app.log(f'{CMD_NAME}: Created a new palette: ID = {palette.id}')
+
+    if palette.dockingState == adsk.core.PaletteDockingStates.PaletteDockStateFloating:
+        palette.dockingState = PALETTE_DOCKING
+
+    palette.isVisible = True
+    return palette
+
+
+def _palette_closed(args: adsk.core.UserInterfaceGeneralEventArgs):
+    app.log(f'{CMD_NAME}: Palette was closed.')
+
+
+def _palette_navigating(args: adsk.core.NavigationEventArgs):
+    if args.navigationURL.startswith('http'):
+        args.launchExternally = True
+
+
+def _palette_incoming(html_args: adsk.core.HTMLEventArgs):
+    message_data: dict = json.loads(html_args.data)
+    message_action = html_args.action
+    app.log(f'{CMD_NAME}: Palette event "{message_action}": {message_data}')
+
+    if message_action == 'downloadFile':
+        url = message_data.get('url', '')
+        filename = message_data.get('filename', 'part')
+        result = _download_file(url, filename)
+        html_args.returnData = result
+
+    else:
+        html_args.returnData = f'OK - {message_action}'
+
+
+def _download_file(url: str, filename: str) -> str:
+    """Downloads the file to the local Downloads folder, or opens it in the
+    browser if GrabCAD requires authentication."""
+    try:
+        os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+        save_path = os.path.join(DOWNLOAD_FOLDER, filename or 'part')
+        headers = {
+            "User-Agent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:154.0) Gecko/20100101 Firefox/154.0'
+        }
+        response = requests.get(url, headers=headers, stream=True)
+        response.raise_for_status()
+        with open(save_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        return f'Downloaded to {save_path}'
+    except Exception as e:
+        app.log(f'{CMD_NAME}: Download failed: {type(e).__name__}: {e}')
+        _open_in_browser(url)
+        return f'Direct download blocked by GrabCAD ({e}). Opened in browser - please log in to download.'
+
+
+def _open_in_browser(url: str):
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception as e:
+        app.log(f'{CMD_NAME}: Could not open browser: {e}')
+
+
 class InputChangedHandler(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         changed_input = args.input
@@ -214,15 +307,31 @@ class InputChangedHandler(adsk.core.InputChangedEventHandler):
                         i.isVisible = False
 
         if changed_input.id == 'search':
-            app.log('searchj')
-            selected_vendor = inputs.itemById('vendor').selectedItem.name
-            vendor = _vendorCache[0][selected_vendor]
-            filters = {
-                key: vendor_input.value
-                for key, vendor_input in _vendorCache[1][selected_vendor].items()
-            }
-            results = vendor.search(inputs.itemById('query').value, filters, app)
-            
-
-            app.log(str(results))
-            app.log(str(len(results)))
+            app.log('search')
+            palette = None
+            try:
+                selected_vendor = inputs.itemById('vendor').selectedItem.name
+                vendor = _vendorCache[0][selected_vendor]
+                filters = {
+                    key: vendor_input.value
+                    for key, vendor_input in _vendorCache[1][selected_vendor].items()
+                }
+                palette = _get_palette()
+                palette.sendInfoToHTML('status', f'Searching for "{inputs.itemById("query").value}" on {selected_vendor}...')
+                results = vendor.search(inputs.itemById('query').value, filters, app)
+                app.log(f'SEARCH RESULTS ({selected_vendor}): {results}')
+                app.log(f'RESULT COUNT: {len(results)}')
+                if isinstance(results, int):
+                    palette.sendInfoToHTML('searchError', f'Search failed with status code {results}')
+                else:
+                    palette.sendInfoToHTML('searchResults', json.dumps({
+                        'vendor': selected_vendor,
+                        'query': inputs.itemById('query').value,
+                        'results': results
+                    }))
+            except Exception as e:
+                app.log(f'SEARCH FAILED: {type(e).__name__}: {e}')
+                import traceback
+                app.log(traceback.format_exc())
+                if palette:
+                    palette.sendInfoToHTML('searchError', f'Search failed: {type(e).__name__}: {e}')
