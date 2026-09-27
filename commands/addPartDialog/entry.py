@@ -282,10 +282,22 @@ def _palette_incoming(html_args: adsk.core.HTMLEventArgs):
 SUPPORTED_CAD_EXTENSIONS = {'.step', '.stp', '.iges', '.igs', '.sat', '.smt', '.f3d'}
 
 
+def _make_download_dir() -> str:
+    # fusion can't read the system temp dir from inside its sandbox, so stage downloads under its own user data path.
+    root = app.applicationFolders.userDataPath
+    if not root:
+        raise RuntimeError('fusion didnt provide a user data path to download into.')
+
+    root = root.rstrip('/\\')
+    staging = os.path.join(root, 'vendor-part-search')
+    os.makedirs(staging, exist_ok=True)
+    return tempfile.mkdtemp(prefix='download_', dir=staging)
+
+
 def _download_file(url: str, filename: str) -> str:
     tmp_dir = None
     try:
-        tmp_dir = tempfile.mkdtemp(prefix='fusion_cots_')
+        tmp_dir = _make_download_dir()
         headers = {
             "User-Agent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:154.0) Gecko/20100101 Firefox/154.0'
         }
@@ -333,7 +345,7 @@ def _download_file(url: str, filename: str) -> str:
         return f'Direct download blocked ({e}). Opened in browser - please log in to download.'
 
 
-def _insert_cad_file(file_path: str, design: adsk.fusion.Design):
+def _create_import_options(file_path: str):
     import_mgr = app.importManager
     ext = os.path.splitext(file_path)[1].lower()
 
@@ -350,7 +362,73 @@ def _insert_cad_file(file_path: str, design: adsk.fusion.Design):
     else:
         raise ValueError(f'Unsupported CAD file type: {ext}')
 
-    import_mgr.importToTarget2(options, design.rootComponent)
+    if not options.isValid:
+        raise ValueError(f'fusion rejected {os.path.basename(file_path)} as a readable {ext} file.')
+
+    return options
+
+
+def _copy_bodies_into(source_doc, design: adsk.fusion.Design) -> int:
+    """copy every B-Rep body out of source_doc and into design's root component."""
+    copied = 0
+    for product in source_doc.products:
+        source_design = adsk.fusion.Design.cast(product)
+        if not source_design:
+            continue
+        for body in source_design.rootComponent.bRepBodies:
+            if body.copyToComponent(design.rootComponent):
+                copied += 1
+            else:
+                app.log(f'{CMD_NAME}: copyToComponent returned no body for {body.name}')
+    return copied
+
+
+def _insert_cad_file(file_path: str, design: adsk.fusion.Design) -> str:
+    """import file_path. Returns 'inserted', or 'opened' if Fusion had to put the part in a document of its own."""
+    import_mgr = app.importManager
+    base = os.path.basename(file_path)
+
+    # importToTarget2 inserts straight into the design on windows.
+    if sys.platform != 'darwin':
+        import_mgr.importToTarget2(_create_import_options(file_path), design.rootComponent)
+        return 'inserted'
+
+    # fusion's macOS build segfaults in importToTarget2 when it's called from a custom event, so import into a scratch document and copy the bodies across.
+    target_doc = app.activeDocument
+    scratch_doc = import_mgr.importToNewDocument(_create_import_options(file_path))
+    if not scratch_doc:
+        raise RuntimeError(f'Fusion could not open {base}')
+
+    copied = 0
+
+    # the scratch document is in front now, and Fusion won't write to a document that isn't the active one.
+    try:
+        if target_doc and not target_doc.activate():
+            app.log(f'{CMD_NAME}: Could not re-activate the target document for {base}')
+    except Exception as e:
+        app.log(f'{CMD_NAME}: Could not re-activate the target document for {base}: {type(e).__name__}: {e}')
+
+    try:
+        copied = _copy_bodies_into(scratch_doc, design)
+    except Exception as e:
+        app.log(f'{CMD_NAME}: Could not copy {base} into the design: {type(e).__name__}: {e}')
+        copied = 0
+
+    if copied:
+        app.log(f'{CMD_NAME}: Copied {copied} bod(ies) from {base} into the design')
+        try:
+            scratch_doc.close(False)
+        except Exception as e:
+            app.log(f'{CMD_NAME}: Could not close the scratch document for {base}: {type(e).__name__}: {e}')
+        return 'inserted'
+
+    # leave it open and in front rather than throwing it away.
+    try:
+        scratch_doc.activate()
+    except Exception:
+        pass
+    app.log(f'{CMD_NAME}: Left {base} open in a new document for manual copy')
+    return 'opened'
 
 
 def _open_in_browser(url: str):
@@ -421,22 +499,31 @@ class DeferredImportHandler(adsk.core.CustomEventHandler):
                 _notify_palette_status('No active Fusion design to insert into. Open or create a design first.')
                 return
 
-            inserted, failed = [], []
+            inserted, opened, failed = [], [], []
             for cad_path in cad_files:
+                base = os.path.basename(cad_path)
                 try:
-                    _insert_cad_file(cad_path, design)
-                    inserted.append(os.path.basename(cad_path))
+                    where = _insert_cad_file(cad_path, design)
                 except Exception as e:
                     app.log(f'{CMD_NAME}: Failed to insert {cad_path}: {type(e).__name__}: {e}')
-                    failed.append(os.path.basename(cad_path))
+                    failed.append(base)
+                    continue
 
-            if inserted and not failed:
-                msg = f'Inserted as new component: {", ".join(inserted)}'
-            elif inserted and failed:
-                msg = f'Inserted: {", ".join(inserted)}. Failed: {", ".join(failed)} (see Text Commands log).'
-            else:
-                msg = 'Failed to insert the CAD file(s) into the design. See Text Commands log for details.'
+                if where == 'opened':
+                    opened.append(base)
+                else:
+                    inserted.append(base)
 
+            parts = []
+            if inserted:
+                parts.append(f'Inserted as new component: {", ".join(inserted)}')
+            if opened:
+                parts.append(
+                    f'opened in a new document (copy the bodies into your design): {", ".join(opened)}')
+            if failed:
+                parts.append(f'failed: {", ".join(failed)} (see Text Commands log)')
+
+            msg = '. '.join(parts) if parts else 'Nothing to import. See Text Commands log for details.'
             _notify_palette_status(msg)
 
         except Exception:
