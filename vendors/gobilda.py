@@ -51,8 +51,6 @@ class GoBilda(Vendor):
             return {'allowed_types': allowed_types}
 
     def __reformat__(self, item: dict, allowed_types: list, app) -> dict:
-        app.log('reformatting')
-
         sku = item.get('product_code', '')
 
         links = []
