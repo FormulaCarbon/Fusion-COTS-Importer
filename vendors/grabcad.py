@@ -9,6 +9,8 @@ if lib_path not in sys.path:
 import requests
 
 class GrabCAD(Vendor):
+    hidden = True
+
     @property
     def name(self):
         return 'GrabCAD'

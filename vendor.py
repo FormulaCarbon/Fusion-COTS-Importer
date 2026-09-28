@@ -2,6 +2,9 @@ from abc import ABC, abstractmethod
 import adsk.core # type: ignore[import-not-found]
 
 class Vendor(ABC):
+    # set True to keep a vendor in the tree but out of the add-in's vendor list
+    hidden = False
+
     @property
     @abstractmethod
     def name(self):

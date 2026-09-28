@@ -34,6 +34,7 @@ def load_vendors[T](folder_path, base_class: type[T]) -> dict[str, T]:
                 issubclass(obj, base_class)
                 and obj is not base_class
                 and not inspect.isabstract(obj)
+                and not getattr(obj, 'hidden', False)
                 and obj.__module__ == module_name  # skip re-imported classes
             ):
                 app.log('wwwwww')
