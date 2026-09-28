@@ -1,12 +1,13 @@
 {
-	"autodeskProduct":	"Fusion",
+	"autodeskProduct":	"Fusion360",
 	"type":	"addin",
-	"author":	"",
+	"id":	"D377855C-FB89-4B2E-840F-740C71C7C45F",
+	"author":	"Siddharth Kakamanu and Kaushik Duddala",
 	"description":	{
-		"":	"Built-in part search engine"
+		"":	"Search vendor sites for COTS parts and import them into your design"
 	},
-	"version":	"",
-	"runOnStartup":	false,
+	"version":	"0.0.1",
+	"runOnStartup":	true,
 	"supportedOS":	"windows|mac",
 	"editEnabled":	true,
 	"iconFilename":	"AddInIcon.svg"

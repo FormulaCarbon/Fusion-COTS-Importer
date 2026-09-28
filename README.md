@@ -11,7 +11,7 @@ user has a query and other info. Dialog triggers a pallete that renders the sear
 
 Current functionality:
 - Search for parts, browse, and download
-- currently only supports goBILDA and Thrifty Bot, GrabCAD in progress
+- currently only supports goBILDA and Thrifty Bot, GrabCAD is hidden until auth is sorted
 Can add part as internal component
 - macos currently doesnt fully support importing properly and instead imports into a new tab
 
@@ -29,11 +29,31 @@ Upcoming functionality:
 | --- | --- | --- |
 | goBILDA | `searchserverapi.com` search API | all step file zips |
 | Thrifty Bot | shopify search JSON (`search/suggest.json`) | Google Drive share links inside the product description, links are extracted from the description markup |
-| GrabCAD | API | in progress, downloads need auth so need a way to let user auth |
+| GrabCAD | API | hidden for now, downloads need auth so we need a way to let the user auth |
 
 shopify search caps results at 10 per query, so thrifty bot returns at most 10 hits and drops any that don't have a CAD file.
 
 ## installation
-download as zip (or clone) and add through fusion plugin manager
- 
-in fusion, go to utilities toolbar, click on "Scripts and Add-Ins", then the +, then "script or add-in from device" and select the folder.
+
+### from a build
+
+```bash
+python3 build.py
+```
+
+this writes `dist/VendorSearch.bundle`, a zip containing a `VendorSearch.bundle` folder. unpack it into fusion's plugin directory and restart fusion:
+
+- macOS: `~/Library/Application Support/Autodesk/ApplicationPlugins`
+- Windows: `%APPDATA%\Autodesk\ApplicationPlugins`
+
+The add-in starts with fusion. It also shows up under Utilities > Scripts and Add-Ins if you want to stop or start it manually.
+
+### for development
+
+Clone the repo and copy it into the Add-Ins directory as a folder named
+`VendorSearch`, so the folder, `.py` and `.manifest` names all match:
+
+- macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/VendorSearch`
+- Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\VendorSearch`
+
+Or in Fusion, go to the Utilities tab, click "Scripts and Add-Ins", then the +, then "script or add-in from device" and select the folder.

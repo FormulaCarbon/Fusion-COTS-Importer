@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage AutodeskProduct="Fusion360"
+	Name="Vendor Part Search"
+	Description="Search vendor sites for COTS parts and import them into your design"
+	AppVersion="0.0.1"
+	Author="Siddharth Kakamanu and Kaushik Duddala"
+	AppNameSpace="appstore.autodesk.com"
+	ProductCode="*"
+	UpgradeCode="{F01AAD71-9136-4F11-8338-DB2AA21B4514}">
+	<Components>
+		<ComponentEntry AppName="VendorSearch"
+			Version="0.0.1"
+			ModuleName="./Contents/VendorSearch/VendorSearch.manifest"
+			AppDescription="Search vendor sites for COTS parts and import them into your design" />
+	</Components>
+</ApplicationPackage>
